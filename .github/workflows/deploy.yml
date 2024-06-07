@@ -28,7 +28,7 @@ jobs:
       - name: 创建配置文件夹
         run: |
           mkdir nginx-app
-          cp docker-compose-prod.yml dev.sh nginx-app
+          cp docker-compose-prod.yml dev.sh nginx.conf nginx-app
           cp -r conf.d nginx-app
 
       - name: 将配置文件夹copy到ssh
