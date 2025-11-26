@@ -1,8 +1,7 @@
-version: "3"
-
 services:
   nginx:
     image: nginx:latest
+    container_name: nginx-gateway
     restart: always
     ports:
       - 80:80
@@ -11,5 +10,11 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf
     networks:
       - nginx-network
+      - erp-db-network
+
 networks:
   nginx-network:
+    driver: bridge
+  erp-db-network:
+    external: true
+    name: erp-db-network

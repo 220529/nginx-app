@@ -1,53 +1,46 @@
-# This is a basic workflow to help you get started with Actions
+name: Deploy nginx-gateway
 
-name: deploy nginx-app
-
-# Controls when the workflow will run
+# 触发条件: 推送到 master 分支或手动触发
 on:
-  # Triggers the workflow on push or pull request events but only for the "master" branch
   push:
-    tags:
-      - nginx-app/**
-
-  # Allows you to run this workflow manually from the Actions tab
+    branches:
+      - master
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
+  deploy:
     runs-on: ubuntu-latest
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - name: 检出代码仓库
+      # 1. 检出代码
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 创建配置文件夹
-        run: |
-          mkdir nginx-app
-          cp docker-compose-prod.yml dev.sh nginx.conf nginx-app
-          cp -r conf.d nginx-app
-
-      - name: 将配置文件夹copy到ssh
+      # 2. 上传配置文件到服务器
+      - name: Upload files to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
-          source: nginx-app
-          target: /app
+          source: "docker-compose-prod.yml,nginx.conf,conf.d"
+          target: /app/nginx-app/
 
-      - name: 登录ssh，部署镜像
+      # 3. SSH 到服务器部署
+      - name: Deploy on server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
-          script_stop: true
           script: |
-            cd /app/nginx-app/
-            docker compose -f docker-compose-prod.yml down
+            cd /app/nginx-app
+
+            # 重新加载配置（不中断服务）
+            docker compose -f docker-compose-prod.yml exec -T nginx nginx -s reload || \
             docker compose -f docker-compose-prod.yml up -d
+
+            # 查看状态
+            docker compose -f docker-compose-prod.yml ps
+
+            echo "✅ nginx-gateway 部署完成!"
