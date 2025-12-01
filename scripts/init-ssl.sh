@@ -31,7 +31,7 @@ fi
 
 # 停止 nginx（释放 80 端口给 certbot）
 echo "停止 nginx 以释放 80 端口..."
-docker compose -f /opt/nginx-app/docker-compose-prod.yml down || true
+docker compose -f /app/nginx-app/docker-compose-prod.yml down || true
 
 # 为每个域名申请证书
 for domain in "${DOMAINS[@]}"; do
@@ -56,7 +56,7 @@ done
 # 重启 nginx
 echo ""
 echo "重启 nginx..."
-docker compose -f /opt/nginx-app/docker-compose-prod.yml up -d
+docker compose -f /app/nginx-app/docker-compose-prod.yml up -d
 
 echo ""
 echo "=========================================="

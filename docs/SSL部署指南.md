@@ -54,7 +54,7 @@ yum install -y certbot
 **方法一：使用脚本（推荐）**
 
 ```bash
-cd /opt/nginx-app
+cd /app/nginx-app
 chmod +x scripts/init-ssl.sh
 ./scripts/init-ssl.sh
 ```
@@ -63,7 +63,7 @@ chmod +x scripts/init-ssl.sh
 
 ```bash
 # 1. 停止 nginx 释放 80 端口
-docker compose -f /opt/nginx-app/docker-compose-prod.yml down
+docker compose -f /app/nginx-app/docker-compose-prod.yml down
 
 # 2. 为每个域名申请证书
 certbot certonly --standalone -d erp.lytt.fun
@@ -78,7 +78,7 @@ ls -la /etc/letsencrypt/live/
 ### 步骤 4: 切换到 HTTPS 配置
 
 ```bash
-cd /opt/nginx-app/conf.d
+cd /app/nginx-app/conf.d
 
 # 备份原配置
 mv nginx.conf nginx-http-only.conf.bak
@@ -90,13 +90,13 @@ mv nginx-ssl.conf nginx.conf
 ### 步骤 5: 创建必要目录
 
 ```bash
-mkdir -p /opt/nginx-app/certbot/www
+mkdir -p /app/nginx-app/certbot/www
 ```
 
 ### 步骤 6: 重启 nginx
 
 ```bash
-cd /opt/nginx-app
+cd /app/nginx-app
 docker compose -f docker-compose-prod.yml up -d
 
 # 检查状态
@@ -127,7 +127,7 @@ Let's Encrypt 证书有效期 90 天，需要配置自动续期。
 crontab -e
 
 # 添加每天凌晨 2 点执行续期检查
-0 2 * * * /opt/nginx-app/scripts/renew-ssl.sh >> /var/log/ssl-renew.log 2>&1
+0 2 * * * /app/nginx-app/scripts/renew-ssl.sh >> /var/log/ssl-renew.log 2>&1
 ```
 
 ### 手动测试续期
@@ -187,7 +187,7 @@ docker exec nginx-gateway nginx -s reload
 如果 HTTPS 配置有问题，可以快速回滚到 HTTP：
 
 ```bash
-cd /opt/nginx-app/conf.d
+cd /app/nginx-app/conf.d
 
 # 恢复 HTTP 配置
 mv nginx.conf nginx-ssl.conf
