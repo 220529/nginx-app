@@ -10,6 +10,7 @@ DOMAINS=(
     "lego.lytt.fun"
     "lego.api.lytt.fun"
     "nest.lytt.fun"
+    "m.lytt.fun"
 )
 
 # 邮箱（用于证书过期提醒）
