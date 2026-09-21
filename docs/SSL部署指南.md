@@ -1,100 +1,90 @@
 # SSL/HTTPS 部署指南
 
-生产环境使用宿主机 Nginx 终止 TLS：
-
-```text
-HTTP :80  -> 301 -> HTTPS :443
-HTTPS      -> 127.0.0.1:8080
-```
+生产环境由宿主机 Nginx 终止 TLS。每个启用 TLS 的站点都采用同一套流程：HTTP 只保留 ACME challenge 并跳转 HTTPS，HTTPS 反向代理到该站点的 `SITE_UPSTREAM_URL`。
 
 证书只保存在服务器 `/etc/letsencrypt`，不提交到 Git。
 
-## 1. 一次性前置条件
+## 一次性前置条件
 
-- `erp.lytt.fun` 的 DNS 已解析到当前服务器；
+- 每个 `SITE_DOMAIN` 的 DNS 已解析到当前服务器；
 - 云安全组和系统防火墙允许 TCP 80、443；
-- 论文系统已经能够响应 `127.0.0.1:8080`；
+- 对应应用已经监听站点配置中的 `SITE_UPSTREAM_URL`；
 - 宿主机 Nginx 已安装并由 systemd 管理；
-- GitHub 仓库 Secrets 中已添加 `SSH_HOST`、`SSH_USERNAME`、`SSH_PASSWORD` 和 `CERTBOT_EMAIL`。
+- GitHub Secrets 已添加 `SSH_HOST`、`SSH_USERNAME`、`SSH_PASSWORD` 和 `CERTBOT_EMAIL`。
 
-域名、上游端口、部署暂存目录、Webroot、健康检查路径和 timer 参数统一维护在：
+网关公共参数在 `config/gateway.env`，项目差异在 `config/sites/*.env`。当前论文站点配置只是：
 
 ```text
-config/deployment.env
+config/sites/erp-settlement.env
 ```
 
-## 2. 自动申请并发布
+## 自动申请并发布
 
-本仓库的 Tag 只负责宿主机 Nginx 和证书，不负责论文系统前后端镜像构建；应用镜像由
-`erp-settlement-thesis` 仓库的发布流程负责。
-
-直接在本地运行：
+从网关仓库运行：
 
 ```bash
 cd /Users/kaixin/main/nginx-app
 ./tag.sh
 ```
 
-生成的 Tag 格式为：
+Tag 格式为：
 
 ```text
 master/nginx-app/YYYY-MM-DD/HH-MM-SS
 ```
 
-首次 Tag 发布时，GitHub Actions 会自动：
+首次发布某个缺证书的站点时，GitHub Actions 会：
 
-1. 读取共享配置并渲染 HTTPS 和临时 HTTP 配置；
-2. 校验渲染后的配置；
-3. 上传生产配置和证书申请用的 bootstrap 配置；
-4. 在服务器安装 Certbot（支持 apt、dnf、yum）；
-5. 临时启用 HTTP challenge 路由并申请证书；
-6. 切换到 HTTPS 配置；
-7. 创建每日证书续期 timer；
-8. 检查 HTTPS 页面和 API 健康接口。
+1. 加载全部站点配置并渲染生产配置和 ACME bootstrap 配置；
+2. 在 Runner 内用 Nginx 校验配置语法；
+3. 上传完整发布包；
+4. 自动安装 Certbot（支持 apt、dnf、yum）；
+5. 临时启用该站点的 HTTP challenge 并申请证书；
+6. 安装所有站点的最终配置并 reload Nginx；
+7. 按站点配置检查页面和 API 健康路径。
 
-后续 Tag 不会重复申请证书，只会发布新配置。
+后续发布不会重复申请仍有效的证书。应用镜像构建和 ACR 发布仍由应用仓库负责。
 
-## 3. 验证
-
-```bash
-curl -I http://erp.lytt.fun/login
-curl -I https://erp.lytt.fun/login
-curl -fsS https://erp.lytt.fun/api/health
-```
-
-HTTP 应返回 301，HTTPS 页面和接口应返回成功状态。
-
-服务器上检查续期 timer：
+## 新增站点
 
 ```bash
-systemctl status erp-settlement-certbot-renew.timer --no-pager
-systemctl list-timers | grep erp-settlement-certbot
+cp config/sites/erp-settlement.env config/sites/example.env
+# 编辑 example.env 中的 SITE_* 字段
+./tag.sh
 ```
 
-## 4. 手动续期检查
+需要先完成 DNS 和应用上游准备。新增站点不需要新增证书 timer 或 workflow。
 
-自动 timer 执行的脚本是：
+## 验证和续期
 
 ```bash
-sudo /usr/local/sbin/erp-settlement-certbot-renew
+curl -I http://example.example.com/
+curl -I https://example.example.com/
+sudo systemctl status nginx-gateway-certbot-renew.timer --no-pager
+sudo systemctl list-timers | grep nginx-gateway-certbot-renew
+sudo /usr/local/sbin/nginx-gateway-certbot-renew
 ```
 
-证书成功续期后会 reload Nginx，不会重启论文系统。
+HTTP 应返回 301；HTTPS 页面和配置的健康接口应返回成功状态。统一 timer 会续期服务器上全部 Certbot 证书，续期成功后只 reload Nginx。
 
-## 5. 回滚
+## 回滚
 
-GitHub Actions 会保留：
+发布会把当前受管配置备份到：
 
 ```text
-/etc/nginx/conf.d/erp-settlement.conf.previous
+/var/lib/nginx-gateway/previous/
 ```
 
-如果 HTTPS 配置校验失败，流水线自动恢复上一版。需要人工恢复时：
+同时记录：
+
+```text
+/var/lib/nginx-gateway/previous/manifest
+/var/lib/nginx-gateway/previous/files.list
+```
+
+如果配置校验、reload 或健康检查失败，流水线会自动恢复上一版站点集合。人工操作前先查看 manifest，再执行：
 
 ```bash
-sudo install -m 0644 \
-  /etc/nginx/conf.d/erp-settlement.conf.previous \
-  /etc/nginx/conf.d/erp-settlement.conf
 sudo nginx -t
 sudo systemctl reload nginx
 ```

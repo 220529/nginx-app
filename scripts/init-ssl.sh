@@ -1,24 +1,40 @@
 #!/usr/bin/env bash
-# Manual fallback for requesting the first certificate with the webroot method.
-# The normal path is the HTTPS deployment workflow, which installs the
-# bootstrap configuration before invoking Certbot.
+# Manual fallback for requesting one site's first certificate.
+# Usage: CERTBOT_EMAIL=... ./scripts/init-ssl.sh config/sites/example.env
 
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG_FILE="${DEPLOYMENT_CONFIG_FILE:-$ROOT_DIR/config/deployment.env}"
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "部署配置不存在: $CONFIG_FILE" >&2
+GATEWAY_CONFIG_FILE="${GATEWAY_CONFIG_FILE:-$ROOT_DIR/config/gateway.env}"
+SITE_ENV_FILE="${SITE_ENV_FILE:-${1:-}}"
+
+if [ ! -f "$GATEWAY_CONFIG_FILE" ]; then
+    echo "Gateway configuration not found: $GATEWAY_CONFIG_FILE" >&2
+    exit 1
+fi
+if [ -z "$SITE_ENV_FILE" ] || [ ! -f "$SITE_ENV_FILE" ]; then
+    echo "Pass one site definition, for example: $ROOT_DIR/config/sites/example.env" >&2
     exit 1
 fi
 
+# shellcheck disable=SC1091
+. "$ROOT_DIR/scripts/lib/gateway-common.sh"
 set -a
 # shellcheck disable=SC1090
-. "$CONFIG_FILE"
+. "$GATEWAY_CONFIG_FILE"
 set +a
+validate_gateway_settings
+load_site_config "$SITE_ENV_FILE"
+: "${GATEWAY_TAG_PREFIX:?GATEWAY_TAG_PREFIX is required}"
 
-DOMAIN="${DOMAIN:-$NGINX_DOMAIN}"
-WEBROOT_DIR="${WEBROOT_DIR:-$NGINX_WEBROOT_PATH}"
+[ "$SITE_TLS_ENABLED" = "true" ] || {
+    echo "TLS is disabled for $SITE_NAME; no certificate is needed." >&2
+    exit 1
+}
+[ "$SITE_CERTBOT_ENABLED" = "true" ] || {
+    echo "Certbot is disabled for $SITE_NAME." >&2
+    exit 1
+}
 : "${CERTBOT_EMAIL:?Set CERTBOT_EMAIL before running this script}"
 
 run_privileged() {
@@ -34,15 +50,14 @@ if ! command -v certbot >/dev/null 2>&1; then
     exit 1
 fi
 
-run_privileged mkdir -p "$WEBROOT_DIR"
+run_privileged mkdir -p "$GATEWAY_WEBROOT_PATH"
 run_privileged certbot certonly \
     --webroot \
-    --webroot-path "$WEBROOT_DIR" \
+    --webroot-path "$GATEWAY_WEBROOT_PATH" \
     --non-interactive \
     --agree-tos \
     --email "$CERTBOT_EMAIL" \
-    --domain "$DOMAIN" \
+    --domain "$SITE_DOMAIN" \
     --keep-until-expiring
 
-: "${NGINX_TAG_PREFIX:?NGINX_TAG_PREFIX is required}"
-echo "Certificate issued for $DOMAIN. Push a ${NGINX_TAG_PREFIX}/* Tag to deploy the HTTPS configuration."
+echo "Certificate issued for $SITE_DOMAIN. Push a ${GATEWAY_TAG_PREFIX}/* Tag to deploy the site configuration."

@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
-# Renew certificates and reload host Nginx when a certificate changes.
+# Renew all Certbot-managed certificates and reload host Nginx when changed.
 
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG_FILE="${DEPLOYMENT_CONFIG_FILE:-$ROOT_DIR/config/deployment.env}"
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "部署配置不存在: $CONFIG_FILE" >&2
+GATEWAY_CONFIG_FILE="${GATEWAY_CONFIG_FILE:-$ROOT_DIR/config/gateway.env}"
+if [ ! -f "$GATEWAY_CONFIG_FILE" ]; then
+    echo "Gateway configuration not found: $GATEWAY_CONFIG_FILE" >&2
     exit 1
 fi
 
+# shellcheck disable=SC1091
+. "$ROOT_DIR/scripts/lib/gateway-common.sh"
 set -a
 # shellcheck disable=SC1090
-. "$CONFIG_FILE"
+. "$GATEWAY_CONFIG_FILE"
 set +a
-
-: "${NGINX_DOMAIN:?NGINX_DOMAIN is required}"
+validate_gateway_settings
 
 run_privileged() {
     if [ "$(id -u)" -eq 0 ]; then
@@ -24,5 +25,10 @@ run_privileged() {
         sudo "$@"
     fi
 }
+
+if ! command -v certbot >/dev/null 2>&1; then
+    echo "certbot is not installed on this host." >&2
+    exit 1
+fi
 
 run_privileged certbot renew --quiet --deploy-hook "systemctl reload nginx"

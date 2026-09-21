@@ -6,15 +6,15 @@ pushd "%~dp0.."
 
 echo.
 echo ========================================
-echo   nginx-app HTTPS 配置部署
+echo   nginx-app 共享网关 Tag 发布
 echo ========================================
 echo.
 
-for /f "tokens=1,* delims==" %%A in (config\deployment.env) do (
-    if "%%A"=="NGINX_TAG_PREFIX" set "TAG_PREFIX=%%B"
+for /f "tokens=1,* delims==" %%A in (config\gateway.env) do (
+    if "%%A"=="GATEWAY_TAG_PREFIX" set "TAG_PREFIX=%%B"
 )
 if not defined TAG_PREFIX (
-    echo config\deployment.env 中缺少 NGINX_TAG_PREFIX
+    echo config\gateway.env 中缺少 GATEWAY_TAG_PREFIX
     popd
     exit /b 1
 )
@@ -53,6 +53,6 @@ if errorlevel 1 (
 )
 
 echo.
-echo Tag 已推送，GitHub Actions 将开始部署 HTTPS 配置。
+echo Tag 已推送，GitHub Actions 将开始部署共享网关配置。
 echo 查看进度: https://github.com/220529/nginx-app/actions
 popd

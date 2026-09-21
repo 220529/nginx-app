@@ -1,26 +1,19 @@
-# ERP settlement gateway (HTTPS)
-#
-# This is the production configuration installed at:
-#   /etc/nginx/conf.d/erp-settlement.conf
-#
-# The certificate files are created on the server by Certbot and are never
-# stored in Git. The host gateway forwards application traffic to the
-# frontend container on the loopback interface.
+# Managed by nginx-app. Do not edit the rendered file on the server.
 
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
 
-    server_name __NGINX_DOMAIN__;
+    server_name __SITE_DOMAIN__;
 
-    ssl_certificate __NGINX_CERT_DIR__/fullchain.pem;
-    ssl_certificate_key __NGINX_CERT_DIR__/privkey.pem;
+    ssl_certificate __SITE_CERT_DIR__/fullchain.pem;
+    ssl_certificate_key __SITE_CERT_DIR__/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 10m;
 
     location / {
-        proxy_pass http://__NGINX_UPSTREAM_HOST__:__NGINX_UPSTREAM_PORT__;
+        proxy_pass __SITE_UPSTREAM_URL__;
 
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -34,10 +27,10 @@ server {
     listen 80;
     listen [::]:80;
 
-    server_name __NGINX_DOMAIN__;
+    server_name __SITE_DOMAIN__;
 
     location ^~ /.well-known/acme-challenge/ {
-        root __NGINX_WEBROOT_PATH__;
+        root __GATEWAY_WEBROOT_PATH__;
         default_type text/plain;
     }
 

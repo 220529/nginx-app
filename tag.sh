@@ -6,33 +6,39 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
 BRANCH_NAME="$(git branch --show-current)"
-CONFIG_FILE="${DEPLOYMENT_CONFIG_FILE:-$ROOT_DIR/config/deployment.env}"
+CONFIG_FILE="${GATEWAY_CONFIG_FILE:-$ROOT_DIR/config/gateway.env}"
 
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo "部署配置不存在: $CONFIG_FILE" >&2
+    echo "网关配置不存在: $CONFIG_FILE" >&2
     exit 1
 fi
 
+# shellcheck disable=SC1091
+. "$ROOT_DIR/scripts/lib/gateway-common.sh"
 set -a
 # shellcheck disable=SC1090
 . "$CONFIG_FILE"
 set +a
 
-: "${NGINX_TAG_PREFIX:?NGINX_TAG_PREFIX is required}"
+validate_gateway_settings
 
 if [ -z "$BRANCH_NAME" ]; then
     echo "无法确定当前分支，不能生成发布 Tag。" >&2
     exit 1
 fi
 
-TAG_BRANCH="${NGINX_TAG_PREFIX%%/*}"
+TAG_BRANCH="${GATEWAY_TAG_PREFIX%%/*}"
+if [ "$TAG_BRANCH" = "$GATEWAY_TAG_PREFIX" ]; then
+    echo "GATEWAY_TAG_PREFIX must include a branch prefix, for example master/nginx-app." >&2
+    exit 1
+fi
 if [ "$BRANCH_NAME" != "$TAG_BRANCH" ]; then
     echo "当前分支为 $BRANCH_NAME，生产 Tag 只能从 $TAG_BRANCH 创建。" >&2
     exit 1
 fi
 
 DATE_STRING="$(date '+%Y-%m-%d/%H-%M-%S')"
-TAG_NAME="${NGINX_TAG_PREFIX}/${DATE_STRING}"
+TAG_NAME="${GATEWAY_TAG_PREFIX}/${DATE_STRING}"
 
 echo "生成的标签名: $TAG_NAME"
 echo "Git 仓库地址: $(git remote get-url origin)"

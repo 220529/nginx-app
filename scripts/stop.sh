@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Stop only the host Nginx gateway. Application containers are managed by the
-# erp-settlement-thesis project.
+# Stop only the host Nginx gateway. Application containers are owned by their
+# respective application repositories.
 
 set -Eeuo pipefail
 
