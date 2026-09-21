@@ -1,29 +1,16 @@
-#!/bin/bash
-# 重启所有 ERP Docker 服务
-# 服务目录: /app
+#!/usr/bin/env bash
+# Validate and gracefully reload the host Nginx service.
 
-set -e
+set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+run_privileged() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
 
-echo "=========================================="
-echo "  重启所有 ERP Docker 服务"
-echo "=========================================="
-
-# 先停止所有服务
-echo ""
-echo ">>> 第一步: 停止所有服务"
-bash "$SCRIPT_DIR/stop.sh"
-
-# 等待一下确保服务完全停止
-sleep 2
-
-# 再启动所有服务
-echo ""
-echo ">>> 第二步: 启动所有服务"
-bash "$SCRIPT_DIR/start.sh"
-
-echo ""
-echo "=========================================="
-echo "  重启完成"
-echo "=========================================="
+run_privileged nginx -t
+run_privileged systemctl reload nginx
+run_privileged systemctl --no-pager --full status nginx

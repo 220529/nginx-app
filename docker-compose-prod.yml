@@ -1,3 +1,6 @@
+# Legacy Docker gateway configuration.
+# Production now uses the host Nginx service and .github/workflows/deploy.yml.
+
 services:
   nginx:
     image: nginx:latest

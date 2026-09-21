@@ -1,210 +1,122 @@
 # SSL/HTTPS 部署指南
 
-## 概述
+生产环境使用宿主机 Nginx 终止 TLS：
 
-本文档说明如何为 nginx-gateway 配置 Let's Encrypt SSL 证书，实现 HTTPS 访问。
-
-## 涉及域名
-
-| 域名 | 服务 |
-|------|------|
-| erp.lytt.fun | ERP 系统 |
-| lego.lytt.fun | Lego 前端 |
-| lego.api.lytt.fun | Lego API |
-| nest.lytt.fun | Nest 服务 |
-
-## 文件说明
-
-```
-nginx-app/
-├── conf.d/
-│   ├── nginx.conf       # HTTP 配置（申请证书前使用）
-│   └── nginx-ssl.conf   # HTTPS 配置（申请证书后使用）
-├── scripts/
-│   ├── init-ssl.sh      # 首次申请证书脚本
-│   └── renew-ssl.sh     # 证书自动续期脚本
-├── certbot/
-│   └── www/             # certbot webroot 验证目录
-└── docker-compose-prod.yml
+```text
+HTTP :80  -> 301 -> HTTPS :443
+HTTPS      -> 127.0.0.1:8080
 ```
 
-## 部署步骤
+证书只保存在服务器 `/etc/letsencrypt`，不提交到 Git。
 
-### 步骤 1: 服务器准备
+## 1. 准备条件
 
-SSH 登录到服务器 (47.93.17.251)：
+- `erp.lytt.fun` 的 DNS 已解析到当前服务器；
+- 云安全组和系统防火墙允许 TCP 80、443；
+- 论文系统已经能够响应 `127.0.0.1:8080`；
+- 宿主机 Nginx 已安装并运行。
+
+检查：
 
 ```bash
-ssh root@47.93.17.251
+sudo nginx -t
+sudo systemctl status nginx --no-pager
+curl -I http://127.0.0.1:8080/login
 ```
 
-### 步骤 2: 安装 certbot
+## 2. 首次申请证书
+
+安装 Certbot：
 
 ```bash
-# Ubuntu/Debian
-apt-get update
-apt-get install -y certbot
-
-# CentOS/RHEL
-yum install -y certbot
+sudo apt-get update
+sudo apt-get install -y certbot
 ```
 
-### 步骤 3: 首次申请证书
-
-**方法一：使用脚本（推荐）**
+先把仓库中的临时 HTTP 配置放到活动位置：
 
 ```bash
 cd /app/nginx-app
-chmod +x scripts/init-ssl.sh
-./scripts/init-ssl.sh
+sudo install -m 0644 \
+  conf.d/nginx-http.conf.example \
+  /etc/nginx/conf.d/erp-settlement.conf
+sudo nginx -t
+sudo systemctl reload nginx
 ```
 
-**方法二：手动申请**
+申请证书：
 
 ```bash
-# 1. 停止 nginx 释放 80 端口
-docker compose -f /app/nginx-app/docker-compose-prod.yml down
-
-# 2. 为每个域名申请证书
-certbot certonly --standalone -d erp.lytt.fun
-certbot certonly --standalone -d lego.lytt.fun
-certbot certonly --standalone -d lego.api.lytt.fun
-certbot certonly --standalone -d nest.lytt.fun
-
-# 3. 查看证书
-ls -la /etc/letsencrypt/live/
+CERTBOT_EMAIL=your-email@example.com ./scripts/init-ssl.sh
 ```
 
-### 步骤 4: 切换到 HTTPS 配置
+脚本会短暂停止宿主机 Nginx，使用 standalone 模式申请证书，完成后自动恢复 Nginx。
+
+检查证书：
 
 ```bash
-cd /app/nginx-app/conf.d
-
-# 备份原配置
-mv nginx.conf nginx-http-only.conf.bak
-
-# 使用 SSL 配置
-mv nginx-ssl.conf nginx.conf
+sudo certbot certificates
+sudo test -s /etc/letsencrypt/live/erp.lytt.fun/fullchain.pem
+sudo test -s /etc/letsencrypt/live/erp.lytt.fun/privkey.pem
 ```
 
-### 步骤 5: 创建必要目录
+## 3. 使用 Tag 发布 HTTPS
+
+证书存在后，在本地推送部署 Tag：
 
 ```bash
-mkdir -p /app/nginx-app/certbot/www
+cd /Users/kaixin/main/nginx-app
+./tag.sh
 ```
 
-### 步骤 6: 重启 nginx
+Tag 格式为：
+
+```text
+master/nginx-app/YYYY-MM-DD/HH-MM-SS
+```
+
+GitHub Actions 会在 Runner 中使用临时证书校验 Nginx 配置；服务器端会再次确认真实证书存在，然后备份、替换并 reload Nginx。
+
+## 4. 验证 HTTPS
 
 ```bash
-cd /app/nginx-app
-docker compose -f docker-compose-prod.yml up -d
-
-# 检查状态
-docker ps
-docker logs nginx-gateway
+curl -I http://erp.lytt.fun/login
+curl -I https://erp.lytt.fun/login
+curl -fsS https://erp.lytt.fun/api/health
 ```
 
-### 步骤 7: 验证 HTTPS
+HTTP 应返回 301，HTTPS 页面和接口应返回成功状态。
+
+## 5. 自动续期
+
+检查 Certbot timer：
 
 ```bash
-# 测试 HTTPS
-curl -I https://erp.lytt.fun
-
-# 测试 HTTP 重定向
-curl -I http://erp.lytt.fun
+systemctl list-timers | grep certbot
 ```
 
-浏览器访问：https://erp.lytt.fun
-
-## 证书自动续期
-
-Let's Encrypt 证书有效期 90 天，需要配置自动续期。
-
-### 配置 cron 定时任务
+手动执行续期检查：
 
 ```bash
-# 编辑 crontab
-crontab -e
-
-# 添加每天凌晨 2 点执行续期检查
-0 2 * * * /app/nginx-app/scripts/renew-ssl.sh >> /var/log/ssl-renew.log 2>&1
+sudo /app/nginx-app/scripts/renew-ssl.sh
 ```
 
-### 手动测试续期
+证书成功续期后脚本只 reload Nginx，不重启论文系统。
+
+## 回滚
+
+GitHub Actions 会保留：
+
+```text
+/etc/nginx/conf.d/erp-settlement.conf.previous
+```
+
+如果 HTTPS 配置出现问题，可先恢复临时 HTTP 配置：
 
 ```bash
-# 测试续期（不会真正续期，只是检查）
-certbot renew --dry-run
-
-# 强制续期
-certbot renew --force-renewal
+sudo install -m 0644 \
+  /app/nginx-app/conf.d/nginx-http.conf.example \
+  /etc/nginx/conf.d/erp-settlement.conf
+sudo nginx -t
+sudo systemctl reload nginx
 ```
-
-## 故障排查
-
-### 证书申请失败
-
-```bash
-# 检查 80 端口是否被占用
-netstat -tlnp | grep :80
-
-# 检查防火墙
-firewall-cmd --list-ports
-ufw status
-
-# 确保域名 DNS 解析正确
-nslookup erp.lytt.fun
-```
-
-### nginx 启动失败
-
-```bash
-# 检查配置语法
-docker exec nginx-gateway nginx -t
-
-# 查看详细日志
-docker logs nginx-gateway --tail 100
-
-# 检查证书文件是否存在
-ls -la /etc/letsencrypt/live/erp.lytt.fun/
-```
-
-### 证书过期
-
-```bash
-# 查看证书过期时间
-certbot certificates
-
-# 强制续期
-certbot renew --force-renewal
-
-# 重载 nginx
-docker exec nginx-gateway nginx -s reload
-```
-
-## 回滚方案
-
-如果 HTTPS 配置有问题，可以快速回滚到 HTTP：
-
-```bash
-cd /app/nginx-app/conf.d
-
-# 恢复 HTTP 配置
-mv nginx.conf nginx-ssl.conf
-mv nginx-http-only.conf.bak nginx.conf
-
-# 重启 nginx
-docker restart nginx-gateway
-```
-
-## 安全建议
-
-1. **HSTS**: 已在 nginx 配置中启用，浏览器会强制使用 HTTPS
-2. **TLS 版本**: 仅允许 TLS 1.2 和 1.3
-3. **证书监控**: 建议配置证书过期告警（UptimeRobot 支持）
-
-## 后续优化
-
-- [ ] 配置 OCSP Stapling 提升性能
-- [ ] 配置 CDN 加速（阿里云 CDN 支持免费 HTTPS）
-- [ ] 申请通配符证书 (*.lytt.fun) 简化管理

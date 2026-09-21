@@ -1,10 +1,10 @@
-name: Deploy nginx-gateway
+name: Deploy host Nginx configuration
 
-# 触发条件: 推送 tag 或手动触发
+# 触发条件: 推送 master/nginx-app/** Tag 或手动触发
 on:
   push:
     tags:
-      - "v*"
+      - "master/nginx-app/**"
   workflow_dispatch:
 
 jobs:
@@ -12,34 +12,133 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 检出代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 上传配置文件到服务器
+      - name: Validate Nginx configuration
+        run: |
+          set -Eeuo pipefail
+          cert_dir="$(mktemp -d)"
+          trap 'rm -rf "$cert_dir"' EXIT
+          openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+            -keyout "$cert_dir/privkey.pem" \
+            -out "$cert_dir/fullchain.pem" \
+            -subj "/CN=erp.lytt.fun" \
+            >/dev/null 2>&1
+          docker run --rm \
+            --volume "$PWD/conf.d/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            --volume "$cert_dir:/etc/letsencrypt/live/erp.lytt.fun:ro" \
+            nginx:1.27-alpine nginx -t
+
+      # Keep the staging path outside the application directory. The SSH step
+      # installs the file atomically after validating the host configuration.
       - name: Upload files to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
-          source: "docker-compose-prod.yml,nginx.conf,conf.d"
-          target: /app/nginx-app/
+          source: "conf.d/nginx.conf"
+          target: /tmp/erp-settlement-nginx/
+          strip_components: 1
+          overwrite: true
 
-      # 3. SSH 到服务器部署
       - name: Deploy on server
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          NGINX_CONFIG_PATH: /etc/nginx/conf.d/erp-settlement.conf
+          NGINX_STAGING_PATH: /tmp/erp-settlement-nginx/nginx.conf
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
+          envs: NGINX_CONFIG_PATH,NGINX_STAGING_PATH
           script: |
-            cd /app/nginx-app
+            set -Eeuo pipefail
 
-            # 重建容器以应用新的 volume 挂载和配置
-            docker compose -f docker-compose-prod.yml up -d --force-recreate
+            : "${NGINX_CONFIG_PATH:?NGINX_CONFIG_PATH is required}"
+            : "${NGINX_STAGING_PATH:?NGINX_STAGING_PATH is required}"
 
-            # 查看状态
-            docker compose -f docker-compose-prod.yml ps
+            run_privileged() {
+              if [ "$(id -u)" -eq 0 ]; then
+                "$@"
+              else
+                sudo "$@"
+              fi
+            }
 
-            echo "✅ nginx-gateway 部署完成!"
+            NGINX_BIN="$(command -v nginx || true)"
+            if [ -z "$NGINX_BIN" ] && [ -x /usr/sbin/nginx ]; then
+              NGINX_BIN=/usr/sbin/nginx
+            fi
+            if [ -z "$NGINX_BIN" ]; then
+              echo "nginx executable not found on the server." >&2
+              exit 1
+            fi
+
+            cert_dir=/etc/letsencrypt/live/erp.lytt.fun
+            for certificate in "$cert_dir/fullchain.pem" "$cert_dir/privkey.pem"; do
+              if [ ! -s "$certificate" ]; then
+                echo "Required certificate file is missing: $certificate" >&2
+                echo "Run scripts/init-ssl.sh on the server before deploying HTTPS." >&2
+                exit 1
+              fi
+            done
+
+            if [ ! -f "$NGINX_STAGING_PATH" ]; then
+              echo "Staged Nginx configuration not found: $NGINX_STAGING_PATH" >&2
+              exit 1
+            fi
+
+            backup_path="${NGINX_CONFIG_PATH}.previous"
+            next_path="${NGINX_CONFIG_PATH}.next"
+
+            rollback() {
+              echo "Restoring the previous Nginx configuration..."
+              if [ -f "$backup_path" ]; then
+                run_privileged install -m 0644 "$backup_path" "$NGINX_CONFIG_PATH"
+              else
+                run_privileged rm -f "$NGINX_CONFIG_PATH"
+              fi
+              run_privileged "$NGINX_BIN" -t || true
+              run_privileged systemctl reload-or-restart nginx || true
+            }
+
+            cleanup() {
+              rm -f "$NGINX_STAGING_PATH"
+              run_privileged rm -f "$next_path" || true
+            }
+            trap cleanup EXIT
+
+            if [ -f "$NGINX_CONFIG_PATH" ]; then
+              run_privileged cp -p "$NGINX_CONFIG_PATH" "$backup_path"
+            else
+              run_privileged rm -f "$backup_path"
+            fi
+
+            run_privileged install -m 0644 "$NGINX_STAGING_PATH" "$next_path"
+            run_privileged mv "$next_path" "$NGINX_CONFIG_PATH"
+
+            if ! run_privileged "$NGINX_BIN" -t; then
+              rollback
+              exit 1
+            fi
+
+            if ! run_privileged systemctl reload-or-restart nginx; then
+              rollback
+              exit 1
+            fi
+
+            if curl --fail --silent --show-error --insecure --max-time 15 \
+              --resolve erp.lytt.fun:443:127.0.0.1 \
+              https://erp.lytt.fun/login >/dev/null \
+              && curl --fail --silent --show-error --insecure --max-time 15 \
+              --resolve erp.lytt.fun:443:127.0.0.1 \
+              https://erp.lytt.fun/api/health >/dev/null; then
+              echo "Nginx reloaded and the HTTPS frontend/API are reachable."
+            else
+              echo "Nginx reloaded, but the ERP frontend health check failed." >&2
+              echo "Check the thesis compose stack on the server." >&2
+            fi
+
+            run_privileged systemctl --no-pager --full status nginx || true
