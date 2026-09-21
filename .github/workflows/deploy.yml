@@ -1,11 +1,18 @@
 name: Deploy host Nginx configuration
 
-# 触发条件: 推送 master/nginx-app/** Tag 或手动触发
+# Push master/nginx-app/YYYY-MM-DD/HH-MM-SS to deploy the HTTPS gateway.
 on:
   push:
     tags:
       - "master/nginx-app/**"
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nginx-gateway-production
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -15,7 +22,98 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Validate Nginx configuration
+      - name: Load deployment configuration
+        id: config
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          set -a
+          # shellcheck disable=SC1091
+          . config/deployment.env
+          set +a
+
+          : "${NGINX_DOMAIN:?NGINX_DOMAIN is required}"
+          : "${NGINX_UPSTREAM_HOST:?NGINX_UPSTREAM_HOST is required}"
+          : "${NGINX_UPSTREAM_PORT:?NGINX_UPSTREAM_PORT is required}"
+          : "${NGINX_CONFIG_PATH:?NGINX_CONFIG_PATH is required}"
+          : "${NGINX_STAGING_DIR:?NGINX_STAGING_DIR is required}"
+          : "${NGINX_WEBROOT_PATH:?NGINX_WEBROOT_PATH is required}"
+          : "${NGINX_TAG_PREFIX:?NGINX_TAG_PREFIX is required}"
+          : "${NGINX_TIMER_NAME:?NGINX_TIMER_NAME is required}"
+          : "${NGINX_RENEW_ON_CALENDAR:?NGINX_RENEW_ON_CALENDAR is required}"
+          : "${NGINX_RENEW_RANDOM_DELAY:?NGINX_RENEW_RANDOM_DELAY is required}"
+          : "${NGINX_HEALTH_PATH:?NGINX_HEALTH_PATH is required}"
+          : "${NGINX_API_HEALTH_PATH:?NGINX_API_HEALTH_PATH is required}"
+          : "${NGINX_HEALTH_CHECK_REQUIRED:?NGINX_HEALTH_CHECK_REQUIRED is required}"
+
+          case "$NGINX_UPSTREAM_PORT" in
+            *[!0-9]*|'')
+              echo "NGINX_UPSTREAM_PORT must be numeric." >&2
+              exit 1
+              ;;
+          esac
+          case "$NGINX_HEALTH_CHECK_REQUIRED" in
+            true|false) ;;
+            *)
+              echo "NGINX_HEALTH_CHECK_REQUIRED must be true or false." >&2
+              exit 1
+              ;;
+          esac
+          case "$NGINX_HEALTH_PATH:$NGINX_API_HEALTH_PATH" in
+            /*:/*) ;;
+            *)
+              echo "Health paths must start with /." >&2
+              exit 1
+              ;;
+          esac
+          case "$NGINX_RENEW_RANDOM_DELAY" in
+            ''|*[!0-9smhd]*)
+              echo "NGINX_RENEW_RANDOM_DELAY must use a systemd duration such as 30m." >&2
+              exit 1
+              ;;
+          esac
+          for config_name in \
+            NGINX_DOMAIN NGINX_UPSTREAM_HOST NGINX_CONFIG_PATH NGINX_STAGING_DIR \
+            NGINX_WEBROOT_PATH NGINX_TAG_PREFIX NGINX_TIMER_NAME \
+            NGINX_RENEW_ON_CALENDAR NGINX_RENEW_RANDOM_DELAY \
+            NGINX_HEALTH_PATH NGINX_API_HEALTH_PATH; do
+            config_value="${!config_name}"
+            case "$config_value" in
+              *$'\n'*|*$'\r'*)
+                echo "$config_name must not contain a newline." >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          NGINX_CERT_DIR="${NGINX_CERT_DIR:-/etc/letsencrypt/live/$NGINX_DOMAIN}"
+
+          {
+            printf 'domain=%s\n' "$NGINX_DOMAIN"
+            printf 'upstream_host=%s\n' "$NGINX_UPSTREAM_HOST"
+            printf 'upstream_port=%s\n' "$NGINX_UPSTREAM_PORT"
+            printf 'config_path=%s\n' "$NGINX_CONFIG_PATH"
+            printf 'staging_dir=%s\n' "$NGINX_STAGING_DIR"
+            printf 'webroot_path=%s\n' "$NGINX_WEBROOT_PATH"
+            printf 'cert_dir=%s\n' "$NGINX_CERT_DIR"
+            printf 'timer_name=%s\n' "$NGINX_TIMER_NAME"
+            printf 'renew_on_calendar=%s\n' "$NGINX_RENEW_ON_CALENDAR"
+            printf 'renew_random_delay=%s\n' "$NGINX_RENEW_RANDOM_DELAY"
+            printf 'health_path=%s\n' "$NGINX_HEALTH_PATH"
+            printf 'api_health_path=%s\n' "$NGINX_API_HEALTH_PATH"
+            printf 'health_check_required=%s\n' "$NGINX_HEALTH_CHECK_REQUIRED"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Render deployment configuration
+        shell: bash
+        run: |
+          bash scripts/render-config.sh .generated/conf.d
+          cp scripts/deploy-host-nginx.sh .generated/conf.d/deploy-host-nginx.sh
+
+      - name: Validate rendered Nginx configurations
+        env:
+          NGINX_DOMAIN: ${{ steps.config.outputs.domain }}
+          NGINX_CERT_DIR: ${{ steps.config.outputs.cert_dir }}
         run: |
           set -Eeuo pipefail
           cert_dir="$(mktemp -d)"
@@ -23,122 +121,53 @@ jobs:
           openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
             -keyout "$cert_dir/privkey.pem" \
             -out "$cert_dir/fullchain.pem" \
-            -subj "/CN=erp.lytt.fun" \
+            -subj "/CN=$NGINX_DOMAIN" \
             >/dev/null 2>&1
+
           docker run --rm \
-            --volume "$PWD/conf.d/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
-            --volume "$cert_dir:/etc/letsencrypt/live/erp.lytt.fun:ro" \
+            --volume "$PWD/.generated/conf.d/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            --volume "$cert_dir:$NGINX_CERT_DIR:ro" \
             nginx:1.27-alpine nginx -t
 
-      # Keep the staging path outside the application directory. The SSH step
-      # installs the file atomically after validating the host configuration.
-      - name: Upload files to server
+          docker run --rm \
+            --volume "$PWD/.generated/conf.d/nginx-http.conf.example:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.27-alpine nginx -t
+
+      - name: Upload deployment files
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
-          source: "conf.d/nginx.conf"
-          target: /tmp/erp-settlement-nginx/
-          strip_components: 1
+          source: ".generated/conf.d/nginx.conf,.generated/conf.d/nginx-http.conf.example,.generated/conf.d/deploy-host-nginx.sh"
+          target: ${{ steps.config.outputs.staging_dir }}/
+          strip_components: 2
           overwrite: true
 
       - name: Deploy on server
         uses: appleboy/ssh-action@v1.0.3
         env:
-          NGINX_CONFIG_PATH: /etc/nginx/conf.d/erp-settlement.conf
-          NGINX_STAGING_PATH: /tmp/erp-settlement-nginx/nginx.conf
+          NGINX_DOMAIN: ${{ steps.config.outputs.domain }}
+          NGINX_CONFIG_PATH: ${{ steps.config.outputs.config_path }}
+          NGINX_STAGING_PATH: ${{ steps.config.outputs.staging_dir }}/nginx.conf
+          NGINX_BOOTSTRAP_PATH: ${{ steps.config.outputs.staging_dir }}/nginx-http.conf.example
+          NGINX_DEPLOY_SCRIPT_PATH: ${{ steps.config.outputs.staging_dir }}/deploy-host-nginx.sh
+          NGINX_WEBROOT_PATH: ${{ steps.config.outputs.webroot_path }}
+          NGINX_CERT_DIR: ${{ steps.config.outputs.cert_dir }}
+          NGINX_TIMER_NAME: ${{ steps.config.outputs.timer_name }}
+          NGINX_RENEW_ON_CALENDAR: ${{ steps.config.outputs.renew_on_calendar }}
+          NGINX_RENEW_RANDOM_DELAY: ${{ steps.config.outputs.renew_random_delay }}
+          NGINX_HEALTH_PATH: ${{ steps.config.outputs.health_path }}
+          NGINX_API_HEALTH_PATH: ${{ steps.config.outputs.api_health_path }}
+          NGINX_HEALTH_CHECK_REQUIRED: ${{ steps.config.outputs.health_check_required }}
+          CERTBOT_EMAIL: ${{ secrets.CERTBOT_EMAIL }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
-          envs: NGINX_CONFIG_PATH,NGINX_STAGING_PATH
+          envs: NGINX_DOMAIN,NGINX_CONFIG_PATH,NGINX_STAGING_PATH,NGINX_BOOTSTRAP_PATH,NGINX_DEPLOY_SCRIPT_PATH,NGINX_WEBROOT_PATH,NGINX_CERT_DIR,NGINX_TIMER_NAME,NGINX_RENEW_ON_CALENDAR,NGINX_RENEW_RANDOM_DELAY,NGINX_HEALTH_PATH,NGINX_API_HEALTH_PATH,NGINX_HEALTH_CHECK_REQUIRED,CERTBOT_EMAIL
+          command_timeout: 20m
           script: |
             set -Eeuo pipefail
-
-            : "${NGINX_CONFIG_PATH:?NGINX_CONFIG_PATH is required}"
-            : "${NGINX_STAGING_PATH:?NGINX_STAGING_PATH is required}"
-
-            run_privileged() {
-              if [ "$(id -u)" -eq 0 ]; then
-                "$@"
-              else
-                sudo "$@"
-              fi
-            }
-
-            NGINX_BIN="$(command -v nginx || true)"
-            if [ -z "$NGINX_BIN" ] && [ -x /usr/sbin/nginx ]; then
-              NGINX_BIN=/usr/sbin/nginx
-            fi
-            if [ -z "$NGINX_BIN" ]; then
-              echo "nginx executable not found on the server." >&2
-              exit 1
-            fi
-
-            cert_dir=/etc/letsencrypt/live/erp.lytt.fun
-            for certificate in "$cert_dir/fullchain.pem" "$cert_dir/privkey.pem"; do
-              if [ ! -s "$certificate" ]; then
-                echo "Required certificate file is missing: $certificate" >&2
-                echo "Run scripts/init-ssl.sh on the server before deploying HTTPS." >&2
-                exit 1
-              fi
-            done
-
-            if [ ! -f "$NGINX_STAGING_PATH" ]; then
-              echo "Staged Nginx configuration not found: $NGINX_STAGING_PATH" >&2
-              exit 1
-            fi
-
-            backup_path="${NGINX_CONFIG_PATH}.previous"
-            next_path="${NGINX_CONFIG_PATH}.next"
-
-            rollback() {
-              echo "Restoring the previous Nginx configuration..."
-              if [ -f "$backup_path" ]; then
-                run_privileged install -m 0644 "$backup_path" "$NGINX_CONFIG_PATH"
-              else
-                run_privileged rm -f "$NGINX_CONFIG_PATH"
-              fi
-              run_privileged "$NGINX_BIN" -t || true
-              run_privileged systemctl reload-or-restart nginx || true
-            }
-
-            cleanup() {
-              rm -f "$NGINX_STAGING_PATH"
-              run_privileged rm -f "$next_path" || true
-            }
-            trap cleanup EXIT
-
-            if [ -f "$NGINX_CONFIG_PATH" ]; then
-              run_privileged cp -p "$NGINX_CONFIG_PATH" "$backup_path"
-            else
-              run_privileged rm -f "$backup_path"
-            fi
-
-            run_privileged install -m 0644 "$NGINX_STAGING_PATH" "$next_path"
-            run_privileged mv "$next_path" "$NGINX_CONFIG_PATH"
-
-            if ! run_privileged "$NGINX_BIN" -t; then
-              rollback
-              exit 1
-            fi
-
-            if ! run_privileged systemctl reload-or-restart nginx; then
-              rollback
-              exit 1
-            fi
-
-            if curl --fail --silent --show-error --insecure --max-time 15 \
-              --resolve erp.lytt.fun:443:127.0.0.1 \
-              https://erp.lytt.fun/login >/dev/null \
-              && curl --fail --silent --show-error --insecure --max-time 15 \
-              --resolve erp.lytt.fun:443:127.0.0.1 \
-              https://erp.lytt.fun/api/health >/dev/null; then
-              echo "Nginx reloaded and the HTTPS frontend/API are reachable."
-            else
-              echo "Nginx reloaded, but the ERP frontend health check failed." >&2
-              echo "Check the thesis compose stack on the server." >&2
-            fi
-
-            run_privileged systemctl --no-pager --full status nginx || true
+            : "${NGINX_DEPLOY_SCRIPT_PATH:?NGINX_DEPLOY_SCRIPT_PATH is required}"
+            bash "$NGINX_DEPLOY_SCRIPT_PATH"

@@ -79,6 +79,9 @@ web_modules/
 .env.production.local
 .env.local
 
+# Rendered Nginx files contain environment-specific paths.
+.generated/
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache

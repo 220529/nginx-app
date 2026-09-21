@@ -1,15 +1,20 @@
 # Bootstrap HTTP configuration used only before the Let's Encrypt certificate
 # exists. Install it temporarily at /etc/nginx/conf.d/erp-settlement.conf,
-# request the certificate, then deploy conf.d/nginx.conf with a Tag.
+# request the certificate, then deploy the rendered HTTPS configuration with a Tag.
 
 server {
     listen 80;
     listen [::]:80;
 
-    server_name erp.lytt.fun;
+    server_name __NGINX_DOMAIN__;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root __NGINX_WEBROOT_PATH__;
+        default_type text/plain;
+    }
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://__NGINX_UPSTREAM_HOST__:__NGINX_UPSTREAM_PORT__;
 
         proxy_http_version 1.1;
         proxy_set_header Host $host;

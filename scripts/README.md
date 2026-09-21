@@ -17,18 +17,23 @@ cd /app/nginx-app
 
 ## 证书
 
-首次申请证书前安装 Certbot：
+正常流程只需要在 GitHub 仓库配置 `CERTBOT_EMAIL`，然后从仓库根目录运行
+`./tag.sh`。流水线会读取 `config/deployment.env`，自动安装 Certbot、申请证书和配置续期 timer。
+
+以下是流水线不可用时的手动兜底流程。首次申请证书前安装 Certbot：
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y certbot
 ```
 
-首次申请 `erp.lytt.fun` 前，先把 `conf.d/nginx-http.conf.example` 安装到 `/etc/nginx/conf.d/erp-settlement.conf`，确认 80 端口可用，再执行：
+首次申请域名前，先按 `config/deployment.env` 中的路径渲染 HTTP 模板并安装到
+`/etc/nginx/conf.d/erp-settlement.conf`，确认 80 端口可用，再执行：
 
 ```bash
+./scripts/render-config.sh
 sudo install -m 0644 \
-  /app/nginx-app/conf.d/nginx-http.conf.example \
+  /app/nginx-app/.generated/conf.d/nginx-http.conf.example \
   /etc/nginx/conf.d/erp-settlement.conf
 sudo nginx -t
 sudo systemctl reload nginx
