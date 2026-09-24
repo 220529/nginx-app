@@ -12,6 +12,8 @@ server {
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 10m;
 
+    __SITE_EXTRA_LOCATIONS__
+
     location / {
         proxy_pass __SITE_UPSTREAM_URL__;
 

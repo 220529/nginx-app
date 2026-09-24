@@ -42,6 +42,7 @@ jobs:
             printf 'config_dir=%s\n' "$GATEWAY_CONFIG_DIR"
             printf 'manifest_path=%s\n' "$GATEWAY_MANIFEST_PATH"
             printf 'backup_dir=%s\n' "$GATEWAY_BACKUP_DIR"
+            printf 'secret_dir=%s\n' "$GATEWAY_SECRET_DIR"
             printf 'webroot_path=%s\n' "$GATEWAY_WEBROOT_PATH"
             printf 'timer_name=%s\n' "$GATEWAY_CERTBOT_TIMER_NAME"
             printf 'renew_on_calendar=%s\n' "$GATEWAY_RENEW_ON_CALENDAR"
@@ -115,6 +116,7 @@ jobs:
           GATEWAY_CONFIG_DIR: ${{ steps.config.outputs.config_dir }}
           GATEWAY_MANIFEST_PATH: ${{ steps.config.outputs.manifest_path }}
           GATEWAY_BACKUP_DIR: ${{ steps.config.outputs.backup_dir }}
+          GATEWAY_SECRET_DIR: ${{ steps.config.outputs.secret_dir }}
           GATEWAY_WEBROOT_PATH: ${{ steps.config.outputs.webroot_path }}
           GATEWAY_CERTBOT_TIMER_NAME: ${{ steps.config.outputs.timer_name }}
           GATEWAY_RENEW_ON_CALENDAR: ${{ steps.config.outputs.renew_on_calendar }}
@@ -122,11 +124,12 @@ jobs:
           GATEWAY_DEPLOY_SCRIPT_PATH: ${{ steps.config.outputs.staging_dir }}/deploy-gateway.sh
           GATEWAY_COMMON_FILE: ${{ steps.config.outputs.staging_dir }}/lib/gateway-common.sh
           CERTBOT_EMAIL: ${{ secrets.CERTBOT_EMAIL }}
+          ADMINER_BASIC_AUTH: ${{ secrets.ADMINER_BASIC_AUTH }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
-          envs: GATEWAY_TAG_PREFIX,GATEWAY_STAGING_DIR,GATEWAY_CONFIG_DIR,GATEWAY_MANIFEST_PATH,GATEWAY_BACKUP_DIR,GATEWAY_WEBROOT_PATH,GATEWAY_CERTBOT_TIMER_NAME,GATEWAY_RENEW_ON_CALENDAR,GATEWAY_RENEW_RANDOM_DELAY,GATEWAY_DEPLOY_SCRIPT_PATH,GATEWAY_COMMON_FILE,CERTBOT_EMAIL
+          envs: GATEWAY_TAG_PREFIX,GATEWAY_STAGING_DIR,GATEWAY_CONFIG_DIR,GATEWAY_MANIFEST_PATH,GATEWAY_BACKUP_DIR,GATEWAY_SECRET_DIR,GATEWAY_WEBROOT_PATH,GATEWAY_CERTBOT_TIMER_NAME,GATEWAY_RENEW_ON_CALENDAR,GATEWAY_RENEW_RANDOM_DELAY,GATEWAY_DEPLOY_SCRIPT_PATH,GATEWAY_COMMON_FILE,CERTBOT_EMAIL,ADMINER_BASIC_AUTH
           command_timeout: 20m
           script: |
             set -Eeuo pipefail

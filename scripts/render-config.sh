@@ -81,6 +81,8 @@ render_template() {
     local upstream_value
     local cert_dir_value
     local webroot_value
+    local secret_dir_value
+    local extra_locations_path
 
     if [ ! -f "$template_path" ]; then
         echo "Nginx template not found: $template_path" >&2
@@ -91,13 +93,35 @@ render_template() {
     upstream_value="$(escape_sed_replacement "$SITE_UPSTREAM_URL")"
     cert_dir_value="$(escape_sed_replacement "$SITE_CERT_DIR")"
     webroot_value="$(escape_sed_replacement "$GATEWAY_WEBROOT_PATH")"
+    secret_dir_value="$(escape_sed_replacement "$GATEWAY_SECRET_DIR")"
+
+    if [ -n "$SITE_EXTRA_LOCATIONS_FILE" ]; then
+        extra_locations_path="$ROOT_DIR/config/sites/$SITE_EXTRA_LOCATIONS_FILE"
+        if [ ! -f "$extra_locations_path" ]; then
+            echo "Extra Nginx locations file not found: $extra_locations_path" >&2
+            exit 1
+        fi
+    fi
 
     sed \
         -e "s|__SITE_DOMAIN__|$domain_value|g" \
         -e "s|__SITE_UPSTREAM_URL__|$upstream_value|g" \
         -e "s|__SITE_CERT_DIR__|$cert_dir_value|g" \
         -e "s|__GATEWAY_WEBROOT_PATH__|$webroot_value|g" \
-        "$template_path" > "$output_path"
+        "$template_path" |
+        awk -v extra_file="$extra_locations_path" -v secret_dir="$secret_dir_value" '
+            index($0, "__SITE_EXTRA_LOCATIONS__") {
+                if (extra_file != "") {
+                    while ((getline line < extra_file) > 0) {
+                        gsub("__GATEWAY_SECRET_DIR__", secret_dir, line)
+                        print line
+                    }
+                    close(extra_file)
+                }
+                next
+            }
+            { print }
+        ' > "$output_path"
 }
 
 for site_env in "${SITE_ENV_FILES[@]}"; do

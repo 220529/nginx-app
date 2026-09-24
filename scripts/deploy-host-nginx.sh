@@ -8,6 +8,7 @@ shopt -s nullglob
 : "${GATEWAY_CONFIG_DIR:?GATEWAY_CONFIG_DIR is required}"
 : "${GATEWAY_MANIFEST_PATH:?GATEWAY_MANIFEST_PATH is required}"
 : "${GATEWAY_BACKUP_DIR:?GATEWAY_BACKUP_DIR is required}"
+: "${GATEWAY_SECRET_DIR:?GATEWAY_SECRET_DIR is required}"
 : "${GATEWAY_WEBROOT_PATH:?GATEWAY_WEBROOT_PATH is required}"
 : "${GATEWAY_CERTBOT_TIMER_NAME:?GATEWAY_CERTBOT_TIMER_NAME is required}"
 : "${GATEWAY_RENEW_ON_CALENDAR:?GATEWAY_RENEW_ON_CALENDAR is required}"
@@ -27,6 +28,7 @@ STAGED_SITES_DIR="$GATEWAY_STAGING_DIR/sites"
 STAGED_BOOTSTRAP_DIR="$GATEWAY_STAGING_DIR/bootstrap"
 BACKUP_MANIFEST_PATH="$GATEWAY_BACKUP_DIR/manifest"
 BACKUP_FILES_LIST="$GATEWAY_BACKUP_DIR/files.list"
+ADMINER_AUTH_FILE="$GATEWAY_SECRET_DIR/erp-settlement-adminer.htpasswd"
 
 run_privileged() {
     if [ "$(id -u)" -eq 0 ]; then
@@ -115,7 +117,26 @@ backup_existing_file() {
     fi
 }
 
-run_privileged mkdir -p "$GATEWAY_CONFIG_DIR" "$GATEWAY_BACKUP_DIR" "$GATEWAY_WEBROOT_PATH"
+write_adminer_auth() {
+    if [ -z "${ADMINER_BASIC_AUTH:-}" ]; then
+        echo "ADMINER_BASIC_AUTH is required for the protected Adminer route." >&2
+        return 1
+    fi
+    case "$ADMINER_BASIC_AUTH" in
+        *$'\n'*|*$'\r'*|*:* ) ;;
+        *)
+            echo "ADMINER_BASIC_AUTH must be one htpasswd line in username:hash format." >&2
+            return 1
+            ;;
+    esac
+    local next_file="$ADMINER_AUTH_FILE.next"
+    printf '%s\n' "$ADMINER_BASIC_AUTH" | run_privileged tee "$next_file" >/dev/null
+    run_privileged chmod 0644 "$next_file"
+    run_privileged mv "$next_file" "$ADMINER_AUTH_FILE"
+}
+
+run_privileged mkdir -p "$GATEWAY_CONFIG_DIR" "$GATEWAY_BACKUP_DIR" "$GATEWAY_SECRET_DIR" "$GATEWAY_WEBROOT_PATH"
+write_adminer_auth
 run_privileged rm -f "$BACKUP_FILES_LIST"
 if [ -f "$GATEWAY_MANIFEST_PATH" ]; then
     run_privileged cp -p "$GATEWAY_MANIFEST_PATH" "$BACKUP_MANIFEST_PATH"

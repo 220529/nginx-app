@@ -17,11 +17,14 @@ SITE_CONFIG_FILE=example.conf
 SITE_TLS_ENABLED=true
 SITE_CERTBOT_ENABLED=true
 SITE_CERT_DIR=/etc/letsencrypt/live/example.example.com
+SITE_EXTRA_LOCATIONS_FILE=example.locations.conf
 SITE_HEALTH_PATH=/
 SITE_API_HEALTH_PATH=/api/health
 SITE_HEALTH_CHECK_REQUIRED=true
 ```
 
 `SITE_TLS_ENABLED=false` 时使用 HTTP 生产配置；启用 TLS 时，证书由 Certbot 保存在 `SITE_CERT_DIR`。健康检查路径为空则跳过该项。配置值必须是简单的环境变量赋值，不要在站点文件中放密码、Token 或 Shell 命令。
+
+`SITE_EXTRA_LOCATIONS_FILE` 可选，用于给单个站点增加额外的 `location` 片段。片段文件放在同一目录，内容会嵌入 HTTPS 站点配置；不要在其中放置敏感凭据。
 
 新增或删除站点后统一通过网关 Tag 发布，禁止直接在服务器手工编辑受管的 `*.conf`。

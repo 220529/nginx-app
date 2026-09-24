@@ -94,6 +94,7 @@ nginx-gateway-certbot-renew.timer           # 所有站点共用的续期 timer
 - 每个站点的 DNS 已解析到服务器，公网 TCP 80、443 已放行；
 - 每个站点的应用先在对应上游地址运行；
 - GitHub Actions Secrets 配置 `SSH_HOST`、`SSH_USERNAME`、`SSH_PASSWORD` 和 `CERTBOT_EMAIL`；
+- ERP Adminer 受保护路由还需要配置 `ADMINER_BASIC_AUTH`，内容为一行 htpasswd 格式的 `用户名:哈希`，只保存到 GitHub Secrets，不提交到仓库；
 - SSH 凭据、证书和其他密钥不提交到 Git。
 
 本仓库只发布 Nginx 网关。应用仓库继续使用自己的 Tag 流程构建镜像、推送 ACR 并更新应用容器。

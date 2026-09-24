@@ -51,6 +51,7 @@ validate_gateway_settings() {
     : "${GATEWAY_CONFIG_DIR:?GATEWAY_CONFIG_DIR is required}"
     : "${GATEWAY_MANIFEST_PATH:?GATEWAY_MANIFEST_PATH is required}"
     : "${GATEWAY_BACKUP_DIR:?GATEWAY_BACKUP_DIR is required}"
+    : "${GATEWAY_SECRET_DIR:?GATEWAY_SECRET_DIR is required}"
     : "${GATEWAY_WEBROOT_PATH:?GATEWAY_WEBROOT_PATH is required}"
     : "${GATEWAY_CERTBOT_TIMER_NAME:?GATEWAY_CERTBOT_TIMER_NAME is required}"
     : "${GATEWAY_RENEW_ON_CALENDAR:?GATEWAY_RENEW_ON_CALENDAR is required}"
@@ -70,7 +71,7 @@ validate_gateway_settings() {
             exit 1
             ;;
     esac
-    for path_name in GATEWAY_STAGING_DIR GATEWAY_CONFIG_DIR GATEWAY_MANIFEST_PATH GATEWAY_BACKUP_DIR GATEWAY_WEBROOT_PATH; do
+    for path_name in GATEWAY_STAGING_DIR GATEWAY_CONFIG_DIR GATEWAY_MANIFEST_PATH GATEWAY_BACKUP_DIR GATEWAY_SECRET_DIR GATEWAY_WEBROOT_PATH; do
         local path_value="${!path_name}"
         validate_no_newline "$path_name" "$path_value"
         case "$path_value" in
@@ -108,6 +109,7 @@ load_site_config() {
 
     unset \
         SITE_NAME SITE_DOMAIN SITE_CONFIG_FILE SITE_UPSTREAM_URL \
+        SITE_EXTRA_LOCATIONS_FILE \
         SITE_TLS_ENABLED SITE_CERTBOT_ENABLED SITE_CERT_DIR \
         SITE_HEALTH_PATH SITE_API_HEALTH_PATH SITE_HEALTH_CHECK_REQUIRED
 
@@ -121,6 +123,7 @@ load_site_config() {
     : "${SITE_UPSTREAM_URL:?SITE_UPSTREAM_URL is required in $site_env}"
 
     SITE_CONFIG_FILE="${SITE_CONFIG_FILE:-${SITE_NAME}.conf}"
+    SITE_EXTRA_LOCATIONS_FILE="${SITE_EXTRA_LOCATIONS_FILE:-}"
     SITE_TLS_ENABLED="${SITE_TLS_ENABLED:-true}"
     SITE_CERTBOT_ENABLED="${SITE_CERTBOT_ENABLED:-$SITE_TLS_ENABLED}"
     SITE_CERT_DIR="${SITE_CERT_DIR:-/etc/letsencrypt/live/$SITE_DOMAIN}"
@@ -132,6 +135,7 @@ load_site_config() {
     validate_no_newline SITE_DOMAIN "$SITE_DOMAIN"
     validate_no_newline SITE_CONFIG_FILE "$SITE_CONFIG_FILE"
     validate_no_newline SITE_UPSTREAM_URL "$SITE_UPSTREAM_URL"
+    validate_no_newline SITE_EXTRA_LOCATIONS_FILE "$SITE_EXTRA_LOCATIONS_FILE"
     validate_no_newline SITE_CERT_DIR "$SITE_CERT_DIR"
     validate_no_newline SITE_HEALTH_PATH "$SITE_HEALTH_PATH"
     validate_no_newline SITE_API_HEALTH_PATH "$SITE_API_HEALTH_PATH"
@@ -149,6 +153,9 @@ load_site_config() {
             ;;
     esac
     validate_config_filename "$SITE_CONFIG_FILE"
+    if [ -n "$SITE_EXTRA_LOCATIONS_FILE" ]; then
+        validate_config_filename "$SITE_EXTRA_LOCATIONS_FILE"
+    fi
     case "$SITE_UPSTREAM_URL" in
         http://*|https://*) ;;
         *)
